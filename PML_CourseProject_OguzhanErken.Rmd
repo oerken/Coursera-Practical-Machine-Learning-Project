@@ -1,0 +1,182 @@
+---
+title: "Practical Machine Learning - Peer-Graded Assignment"
+author: "Oguzhan Erken"
+date: "11/18/2020"
+output: html_document
+---
+# I. Overview
+This report is written for the Practical Machine Learning Course from Coursera. RStudio is used as the environment and both Rmd and html versions are included in the GitHub repository. The main objective of the project is to build a prediction model for the training manner of 6 participants. The detailed information about the recorded data and training exercise can be found below. The developed model is used applied to 20 test cases as part of the Practical Machine Learning course. 
+
+# II. Background and Data
+## II.a. Background
+"Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset)."
+
+## II.a. Data
+
+"The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv "
+
+Create a model to predict the manner in which the subjects did the exercise using the accelerometer data as predictors.
+The outcome to be predicted is the “classe” variable.
+
+# III. Purpose
+In this project, a model is going to be built in order to predict the manner of the subjects during their exercises. Accelerometer data, which includes bicep curls data for our case, will be used as predictors. The participants were each instructed to perform the exercise either properly (Class A) or in a way which replicated 4 common weightlifting mistakes (Classes B, C, D, and E). "classe" variable is the outcome to be predicted.
+
+**Full Citation:** Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
+
+# IV. Prepare Data for Prediction and Validations Steps
+## IV.a. Load Libraries
+```{r}
+knitr::opts_chunk$set(fig.width=18, fig.height=12, warning=FALSE, message=FALSE)
+library(knitr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(RColorBrewer)
+library(randomForest)
+library(e1071)
+library(gbm)
+library(corrplot)
+```
+
+## IV.b. Load and Clean Data
+```{r}
+set.seed(1923)
+# Create url variables from the given url of data
+TrainingUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+ValidationUrl  <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+# Load data to training and testing variables
+trainingData <- read.csv(url(TrainingUrl))
+validationData  <- read.csv(url(ValidationUrl))
+```
+
+Prepare data partitions from the training data set. Given testing set will only be used to test the built model and it will be left over during the model preparation. Therefore, training data will be divided into training and testing sets again. 30% of the data will be allocated for testing set. 
+```{r}
+inTrain <- createDataPartition(trainingData$classe, p=0.7, list=FALSE)
+training <- trainingData[inTrain, ]
+testing <- trainingData[-inTrain, ]
+dim(training); dim(testing)
+```
+
+From the given data, NA, Near Zero Variance (NZV) and ID variables are going to be removed.
+Firstly remove NZV:
+```{r}
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing  <- testing[, -nzv]
+dim(training); dim(testing)
+```
+
+Now, variables that are formed of mostly NA will be removed:
+```{r}
+AllNA    <- sapply(training, function(x) mean(is.na(x))) > 0.95
+training <- training[, AllNA==FALSE]
+testing  <- testing[, AllNA==FALSE]
+dim(training); dim(testing)
+```
+
+Since columns from 1 to 5 includes only identification variables, they are removed here:
+```{r}
+training <- training[, -(1:5)]
+testing  <- testing[, -(1:5)]
+dim(training); dim(testing)
+```
+
+Cleaning procedure is complete. Now, correlation of the variables will be explored and analyzed. 
+
+## IV.c. Check Correlation
+```{r}
+corMatrix <- cor(training[, -54])
+corrplot(corMatrix, method = "color", type = "lower")
+```
+
+When the correlation plot is analyzed, it can be seen that some of the variables are highly correlated. Therefore, those will be removed from the dataset (0.85 is chosen as the threshold). 
+
+```{r}
+c <- findCorrelation(corMatrix, cutoff = .85)
+training <- training[,-c]
+testing <- testing[,-c]
+dim(training); dim(testing)
+```
+
+# V. Preparation of the Prediction Model
+After loading and cleaning the data processes are performed, next step is to build the prediction model and perform cross validation. Three different methods are going to be used for the model building, which are random forest, decision tree and boosting. Models are going to be compared and the model with the highest accuracy is going to be used on the Validation set.
+
+## V.a. Decision Tree
+```{r}
+# fit
+set.seed(1923)
+fitDT <- rpart(classe ~ ., data=training, method="class")
+fancyRpartPlot(fitDT)
+
+# prediction
+predDT <- predict(fitDT, newdata=testing, type="class")
+confMatDT <- confusionMatrix(predDT, testing$classe)
+confMatDT
+
+# plot matrix results
+plot(confMatDT$table, col = confMatDT$byClass, 
+     main = paste("Decision Tree Acc. is", round(confMatDT$overall['Accuracy'], 4)))
+```
+
+## V.b. Boosting Model
+```{r}
+# fit
+set.seed(1923)
+controlBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+fitBM  <- train(classe ~ ., data=training, method = "gbm",
+                    trControl = controlBM, verbose = FALSE)
+fitBM$finalModel
+
+# prediction
+predBM <- predict(fitBM, newdata=testing)
+confMatBM <- confusionMatrix(predBM, testing$classe)
+confMatBM
+
+# plot matrix results
+plot(confMatBM$table, col = confMatBM$byClass, 
+     main = paste("Boosting Model Acc. is", round(confMatBM$overall['Accuracy'], 4)))
+
+```
+
+## V.c. Random Forest
+```{r}
+# fit
+set.seed(1923)
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+fitRF <- train(classe ~ ., data=training, method="rf", trControl=controlRF)
+fitRF$finalModel
+
+# prediction
+predRF <- predict(fitRF, newdata=testing)
+confMatRF <- confusionMatrix(predRF, testing$classe)
+confMatRF
+
+# plot matrix results
+plot(confMatRF$table, col = confMatRF$byClass, 
+     main = paste("Random Forest Acc. is", round(confMatRF$overall['Accuracy'], 4)))
+```
+
+## VI. Validation of the Prediction Model with the Given Testing Data
+The accuracy of the tried models are:
+1) Decision Tree: 0.6962
+2) Boosting Model: 0.9881
+3) Random Forest: 0.9986
+
+As can be seen, boosting model and random forest performed very well on the training data. Since, accuracy of the random forest is a little bit higher, this model is going to be applied to the validation data.
+
+```{r}
+predictTEST <- predict(fitRF, newdata=validationData)
+predictTEST
+```
+
+
+
+
